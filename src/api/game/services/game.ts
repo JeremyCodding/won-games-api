@@ -3,9 +3,10 @@
  */
 
 import { JSDOM } from "jsdom";
-import axios from "axios";
 import { factories } from "@strapi/strapi";
+import axios from "axios";
 import slugify from "slugify";
+import qs from "querystring";
 
 function customReplaceAll(str, target, replacement) {
   let result = "";
@@ -22,6 +23,14 @@ function customReplaceAll(str, target, replacement) {
   return result;
 }
 
+function timeout(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function Exception(e) {
+  return { e, data: e.data && e.data.errors && e.data.errors };
+}
+
 const gameService = "api::game.game";
 const publisherService = "api::publisher.publisher";
 const developerService = "api::developer.developer";
@@ -29,51 +38,63 @@ const categoryService = "api::category.category";
 const platformService = "api::platform.platform";
 
 async function getGameInfo(slug) {
-  const gogSlug = customReplaceAll(slug, "-", "_").toLowerCase();
+  try {
+    const gogSlug = customReplaceAll(slug, "-", "_").toLowerCase();
 
-  const body = await axios.get(`https://www.gog.com/game/${gogSlug}`);
-  const dom = new JSDOM(body.data);
+    const body = await axios.get(`https://www.gog.com/game/${gogSlug}`);
+    const dom = new JSDOM(body.data);
 
-  const descriptionElement = dom.window.document.querySelector(".description");
+    const descriptionElement =
+      dom.window.document.querySelector(".description");
 
-  const raw_description = dom.window.document.querySelector(".description");
-  const description = raw_description.innerHTML;
-  const short_description = raw_description.textContent.slice(0, 160);
+    const raw_description = dom.window.document.querySelector(".description");
+    const description = raw_description.innerHTML;
+    const short_description = raw_description.textContent.slice(0, 160);
 
-  const ratingElement = dom.window.document.querySelector(
-    ".age-restrictions__icon use"
-  );
+    const ratingElement = dom.window.document.querySelector(
+      ".age-restrictions__icon use"
+    );
 
-  return {
-    description,
-    short_description,
-    rating: ratingElement
-      ? ratingElement
-          .getAttribute("xlink:href")
-          .replace(/_/g, "")
-          .replace("#", "")
-      : "BR0",
-  };
+    return {
+      description,
+      short_description,
+      rating: ratingElement
+        ? ratingElement
+            .getAttribute("xlink:href")
+            .replace(/_/g, "")
+            .replace("#", "")
+        : "BR0",
+    };
+  } catch (error) {
+    console.log("getGameInfo:", Exception(error));
+  }
 }
 
 async function getByName(name, entityService) {
-  const item = await strapi.service(entityService).find({
-    filters: { name },
-  });
-
-  return item.results.length > 0 ? item.results[0] : null;
+  try {
+    const item = await strapi.service(entityService).find({
+      filters: { name },
+    });
+    return item.results.length > 0 ? item.results[0] : null;
+  } catch (error) {
+    console.log("getByName:", Exception(error));
+  }
 }
 
 async function create(name, entityService) {
-  const item = await getByName(name, entityService);
+  try {
+    const item = await getByName(name, entityService);
 
-  if (!item) {
-    await strapi.service(entityService).create({
-      data: {
-        name,
-        slug: slugify(name, { strict: true, lower: true }),
-      },
-    });
+    if (!item) {
+      await strapi.service(entityService).create({
+        data: {
+          name,
+          slug: slugify(name, { strict: true, lower: true }),
+        },
+      });
+    }
+  } catch (error) {
+    console.log("create:", Exception(error));
   }
 }
 
@@ -129,14 +150,18 @@ async function setImage({ image, game, field = "cover" }) {
 
   console.info(`Uploading ${field} image: ${game.slug}.jpg`);
 
-  await axios({
-    method: "POST",
-    url: `http://localhost:1337/api/upload/`,
-    data: formData,
-    headers: {
-      "Content-Type": `multipart/form-data; boundary=${formData._boundary}`,
-    },
-  });
+  try {
+    await axios({
+      method: "POST",
+      url: `http://localhost:1337/api/upload/`,
+      data: formData,
+      headers: {
+        "Content-Type": `multipart/form-data; boundary=${formData._boundary}`,
+      },
+    });
+  } catch (error) {
+    console.log("setImage:", Exception(error));
+  }
 }
 
 async function createGames(products) {
@@ -198,16 +223,19 @@ async function createGames(products) {
 
 export default factories.createCoreService(gameService, () => ({
   async populate(params) {
-    const gogApiUrl = `https://catalog.gog.com/v1/catalog?limit=48&order=desc%3Atrending`;
+    try {
+      const gogApiUrl = `https://catalog.gog.com/v1/catalog?${qs.stringify(
+        params
+      )}`;
 
-    const {
-      data: { products },
-    } = await axios.get(gogApiUrl);
+      const {
+        data: { products },
+      } = await axios.get(gogApiUrl);
 
-    await createManyToManyData([products[0], products[3]]);
-
-    await createGames([products[0], products[3]]);
-
-    // console.log(await getGameInfo(products[2].slug));
+      await createManyToManyData(products);
+      await createGames(products);
+    } catch (error) {
+      console.log("populate:", Exception(error));
+    }
   },
 }));
